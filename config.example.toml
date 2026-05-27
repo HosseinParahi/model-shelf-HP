@@ -1,0 +1,24 @@
+# Model Shelf — example config.
+#
+# Copy to config.toml (or edit ~/.config/model-shelf/config.toml) and point
+# shelf_root at wherever you want your model library to live. Then run
+# `model-shelf init` once to create the directory tree.
+#
+# shelf_root is the PARENT of three format subfolders:
+#   gguf/        single .gguf files,  e.g. qwen3-14b-q4_k_m.gguf
+#   mlx/         model directories,   e.g. qwen3-14b-4bit/
+#   safetensors/ model directories,   e.g. qwen3-14b/
+#
+# Downloads land directly here via huggingface_hub's local_dir parameter —
+# no parallel cache. A small hidden .cache/huggingface/ subfolder is created
+# for resumability metadata and is filtered out of `model-shelf list`.
+
+shelf_root = "~/.cache/model-shelf/models"
+
+# When false, resolve_model returns {status="missing"} instead of downloading.
+allow_downloads = true
+
+# Examples of alternative backends:
+#   shelf_root = "/Volumes/MyExternal/ModelShelf/models"   # external SSD / DAS on macOS
+#   shelf_root = "/mnt/nas/ai-models"                      # NAS mount on Linux
+#   shelf_root = "D:\\ModelShelf\\models"                  # Windows external drive

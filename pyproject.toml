@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "model-shelf"
+version = "0.12.1"
+description = "Local-first model resolver: check your own storage before downloading from Hugging Face."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Alex Ziskind" }]
+keywords = ["huggingface", "llm", "local-models", "gguf", "llama.cpp", "mcp"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    "huggingface_hub>=0.24",
+    "questionary>=2.0",
+]
+
+[project.scripts]
+model-shelf = "model_shelf.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/model_shelf"]
