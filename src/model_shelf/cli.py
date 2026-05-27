@@ -189,31 +189,39 @@ def cmd_find(args: argparse.Namespace, cfg: Config) -> int:
 
 
 def _print_shelf_contents(root: Path) -> None:
+    """Walk publisher/repo nesting and list files/dirs at each level."""
     for fmt in SUPPORTED_FORMATS:
         sub = root / fmt
         print(f"\n  {fmt}/")
         if not sub.exists():
             print("    (empty)")
             continue
-        if fmt == "gguf":
-            files = sorted(
-                f for f in sub.glob("*.gguf") if not f.name.startswith("._")
+        publishers = sorted(
+            p for p in sub.iterdir()
+            if p.is_dir() and not p.name.startswith("._")
+        )
+        if not publishers:
+            print("    (empty)")
+            continue
+        for publisher in publishers:
+            repos = sorted(
+                r for r in publisher.iterdir()
+                if r.is_dir() and not r.name.startswith("._")
             )
-            if not files:
-                print("    (empty)")
+            if not repos:
                 continue
-            for f in files:
-                print(f"    {f.name}  ({_fmt_size(f.stat().st_size)})")
-        else:
-            dirs = sorted(
-                p for p in sub.iterdir()
-                if p.is_dir() and not p.name.startswith("._")
-            )
-            if not dirs:
-                print("    (empty)")
-                continue
-            for d in dirs:
-                print(f"    {d.name}/")
+            for repo in repos:
+                if fmt == "gguf":
+                    files = sorted(
+                        f for f in repo.glob("*.gguf") if not f.name.startswith("._")
+                    )
+                    for f in files:
+                        print(
+                            f"    {publisher.name}/{repo.name}/{f.name}  "
+                            f"({_fmt_size(f.stat().st_size)})"
+                        )
+                else:
+                    print(f"    {publisher.name}/{repo.name}/")
 
 
 def cmd_list(args: argparse.Namespace, cfg: Config) -> int:

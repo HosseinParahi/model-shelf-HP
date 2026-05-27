@@ -140,26 +140,21 @@ def detect_format(repo_id: str) -> str:
     return "safetensors"
 
 
-def shelf_filename(repo_id: str, quant: str) -> str:
-    """qwen3-14b-q4_k_m.gguf  from  Qwen/Qwen3-14B-GGUF + Q4_K_M.
-
-    If the repo name already contains the quant (e.g. `Qwen3-0.6B-Q4_K_M-GGUF`),
-    don't append it again — that would produce a `-q4_k_m-q4_k_m.gguf` file
-    that doesn't exist on the Hub.
-    """
-    name = repo_id.split("/")[-1]
-    if name.lower().endswith("-gguf"):
-        name = name[: -len("-gguf")]
-    if quant.lower() in name.lower():
-        return f"{name.lower()}.gguf"
-    return f"{name.lower()}-{quant.lower()}.gguf"
+def _split_repo_id(repo_id: str) -> tuple[str, str]:
+    """Return (publisher, repo). Raises ValueError if repo_id lacks a slash."""
+    if "/" not in repo_id:
+        raise ValueError(
+            f"repo_id must be in 'publisher/repo' format (e.g. Qwen/Qwen3-14B-GGUF), got: {repo_id!r}"
+        )
+    publisher, _, repo = repo_id.partition("/")
+    return publisher, repo
 
 
 def hf_filename(repo_id: str, quant: str) -> str:
-    """Qwen3-14B-Q4_K_M.gguf  —  the file inside a Hugging Face GGUF repo.
+    """Filename inside a Hugging Face GGUF repo, preserving original case.
 
-    Same quant-already-in-name logic as `shelf_filename`, but preserving the
-    original capitalization for the HF-side filename.
+    If the repo name already contains the quant (e.g. `Qwen3-0.6B-Q4_K_M-GGUF`),
+    don't append it again — that produces a nonexistent file on the Hub.
     """
     name = repo_id.split("/")[-1]
     if name.lower().endswith("-gguf"):
@@ -169,19 +164,16 @@ def hf_filename(repo_id: str, quant: str) -> str:
     return f"{name}-{quant}.gguf"
 
 
-def shelf_dirname(repo_id: str) -> str:
-    """
-    Friendly directory name for the curated shelf (mlx / safetensors).
+def shelf_path_gguf(shelf_root: Path, repo_id: str, quant: str) -> Path:
+    """Shelf path for a GGUF model: <root>/gguf/<publisher>/<repo>/<file>.gguf."""
+    publisher, repo = _split_repo_id(repo_id)
+    return shelf_root / "gguf" / publisher / repo / hf_filename(repo_id, quant)
 
-    Examples:
-        mlx-community/Qwen3-14B-4bit       -> qwen3-14b-4bit
-        Qwen/Qwen3-14B                     -> qwen3-14b
-        Qwen/Qwen3-14B-MLX                 -> qwen3-14b
-    """
-    name = repo_id.split("/")[-1].lower()
-    if name.endswith("-mlx"):
-        name = name[: -len("-mlx")]
-    return name
+
+def shelf_path_snapshot(shelf_root: Path, repo_id: str, fmt: str) -> Path:
+    """Shelf path for an mlx/safetensors model dir: <root>/<fmt>/<publisher>/<repo>/."""
+    publisher, repo = _split_repo_id(repo_id)
+    return shelf_root / fmt / publisher / repo
 
 
 def _looks_like_model_dir(path: Path) -> bool:
@@ -277,11 +269,10 @@ def resolve_model(
 def _resolve_gguf(config: Config, repo_id: str, quant: str) -> ResolveResult:
     """Check every available shelf for the model. Download into the primary on miss."""
     checks: list[dict] = []
-    fname = shelf_filename(repo_id, quant)
 
     for parent in list_shelf_candidates(config):
+        candidate = shelf_path_gguf(parent, repo_id, quant)
         shelf = parent / "gguf"
-        candidate = shelf / fname
         if candidate.is_file():
             checks.append({"location": "shelf", "root": str(shelf), "result": "hit"})
             return ResolveResult(
@@ -296,19 +287,15 @@ def _resolve_gguf(config: Config, repo_id: str, quant: str) -> ResolveResult:
             path=None, checks=checks,
         )
 
-    # Download into the primary shelf.
-    primary = config.shelf_root / "gguf"
-    primary.mkdir(parents=True, exist_ok=True)
-    final = primary / fname
+    # Download into the primary shelf at <root>/gguf/<publisher>/<repo>/.
+    final = shelf_path_gguf(config.shelf_root, repo_id, quant)
+    final.parent.mkdir(parents=True, exist_ok=True)
     hf_name = hf_filename(repo_id, quant)
     hf_hub_download(
         repo_id=repo_id,
         filename=hf_name,
-        local_dir=str(primary),
+        local_dir=str(final.parent),
     )
-    downloaded = primary / hf_name
-    if downloaded != final:
-        downloaded.rename(final)
 
     return ResolveResult(
         status="downloaded", source="huggingface", format="gguf",
@@ -319,11 +306,10 @@ def _resolve_gguf(config: Config, repo_id: str, quant: str) -> ResolveResult:
 def _resolve_snapshot(config: Config, repo_id: str, fmt: str) -> ResolveResult:
     """Check every available shelf for the model dir. Download into primary on miss."""
     checks: list[dict] = []
-    dname = shelf_dirname(repo_id)
 
     for parent in list_shelf_candidates(config):
+        candidate = shelf_path_snapshot(parent, repo_id, fmt)
         shelf = parent / fmt
-        candidate = shelf / dname
         if _looks_like_model_dir(candidate):
             checks.append({"location": "shelf", "root": str(shelf), "result": "hit"})
             return ResolveResult(
@@ -338,9 +324,8 @@ def _resolve_snapshot(config: Config, repo_id: str, fmt: str) -> ResolveResult:
             path=None, checks=checks,
         )
 
-    # Download into the primary shelf.
-    primary = config.shelf_root / fmt
-    final = primary / dname
+    # Download into the primary shelf at <root>/<fmt>/<publisher>/<repo>/.
+    final = shelf_path_snapshot(config.shelf_root, repo_id, fmt)
     final.mkdir(parents=True, exist_ok=True)
     allow_patterns = SAFETENSORS_ALLOW_PATTERNS if fmt == "safetensors" else None
     snapshot_download(

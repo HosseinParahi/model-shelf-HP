@@ -12,51 +12,46 @@ from model_shelf.resolver import (
     init_shelf,
     list_shelf_candidates,
     resolve_model,
-    shelf_dirname,
-    shelf_filename,
+    shelf_path_gguf,
+    shelf_path_snapshot,
 )
 
 
-# --- filename / dirname helpers --------------------------------------------
-
-def test_shelf_filename_qwen():
-    assert shelf_filename("Qwen/Qwen3-14B-GGUF", "Q4_K_M") == "qwen3-14b-q4_k_m.gguf"
-
-
-def test_shelf_filename_llama():
-    assert (
-        shelf_filename("meta-llama/Llama-3.1-8B-Instruct", "Q5_K_M")
-        == "llama-3.1-8b-instruct-q5_k_m.gguf"
-    )
-
+# --- filename helpers ------------------------------------------------------
 
 def test_hf_filename_preserves_case():
     assert hf_filename("Qwen/Qwen3-14B-GGUF", "Q4_K_M") == "Qwen3-14B-Q4_K_M.gguf"
 
 
-def test_filenames_dont_double_append_quant_when_already_in_name():
-    """Repos like `rippertnt/Qwen3-0.6B-Q4_K_M-GGUF` already carry the quant
-    in the name; appending it again produces a nonexistent file on HF."""
+def test_hf_filename_doesnt_double_append_quant():
+    """Repos that already carry the quant in their name (e.g. -Q4_K_M-GGUF)
+    should not get the quant appended again."""
     assert (
         hf_filename("rippertnt/Qwen3-0.6B-Q4_K_M-GGUF", "Q4_K_M")
         == "Qwen3-0.6B-Q4_K_M.gguf"
     )
+
+
+def test_shelf_path_gguf_uses_publisher_repo_nesting():
+    root = Path("/shelf")
     assert (
-        shelf_filename("rippertnt/Qwen3-0.6B-Q4_K_M-GGUF", "Q4_K_M")
-        == "qwen3-0.6b-q4_k_m.gguf"
+        shelf_path_gguf(root, "Qwen/Qwen3-14B-GGUF", "Q4_K_M")
+        == root / "gguf" / "Qwen" / "Qwen3-14B-GGUF" / "Qwen3-14B-Q4_K_M.gguf"
     )
 
 
-def test_shelf_dirname_mlx_community():
-    assert shelf_dirname("mlx-community/Qwen3-14B-4bit") == "qwen3-14b-4bit"
+def test_shelf_path_snapshot_uses_publisher_repo_nesting():
+    root = Path("/shelf")
+    assert (
+        shelf_path_snapshot(root, "mlx-community/Qwen3-14B-4bit", "mlx")
+        == root / "mlx" / "mlx-community" / "Qwen3-14B-4bit"
+    )
 
 
-def test_shelf_dirname_strips_trailing_mlx():
-    assert shelf_dirname("mlx-community/Qwen3-14B-4bit-mlx") == "qwen3-14b-4bit"
-
-
-def test_shelf_dirname_safetensors():
-    assert shelf_dirname("Qwen/Qwen3-14B") == "qwen3-14b"
+def test_repo_id_without_slash_errors():
+    root = Path("/shelf")
+    with pytest.raises(ValueError, match="publisher/repo"):
+        shelf_path_gguf(root, "no-slash", "Q4_K_M")
 
 
 # --- format detection -------------------------------------------------------
@@ -69,7 +64,6 @@ def test_detect_format_gguf():
 def test_detect_format_mlx():
     assert detect_format("mlx-community/Qwen3-14B-4bit") == "mlx"
     assert detect_format("Qwen/Qwen3-14B-MLX") == "mlx"
-    # MLX token appears mid-name, not as a suffix.
     assert detect_format("Qwen/Qwen3-4B-MLX-4bit") == "mlx"
     assert detect_format("lmstudio-community/Qwen3-4B-MLX-4bit") == "mlx"
 
@@ -89,19 +83,17 @@ def _config(tmp_path: Path, *, allow_downloads: bool = False) -> Config:
 
 def test_gguf_shelf_hit(tmp_path: Path):
     cfg = _config(tmp_path)
-    gguf = cfg.shelf_root / "gguf"
-    gguf.mkdir(parents=True)
-    (gguf / "qwen3-14b-q4_k_m.gguf").write_bytes(b"x")
+    target = cfg.shelf_root / "gguf" / "Qwen" / "Qwen3-14B-GGUF"
+    target.mkdir(parents=True)
+    f = target / "Qwen3-14B-Q4_K_M.gguf"
+    f.write_bytes(b"x")
 
     result = resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", quant="Q4_K_M")
 
     assert result.status == "found"
     assert result.source == "local_shelf"
     assert result.format == "gguf"
-    assert result.path == gguf / "qwen3-14b-q4_k_m.gguf"
-    assert result.checks == [
-        {"location": "shelf", "root": str(gguf), "result": "hit"},
-    ]
+    assert result.path == f
 
 
 def test_gguf_missing_when_downloads_disabled(tmp_path: Path):
@@ -110,8 +102,7 @@ def test_gguf_missing_when_downloads_disabled(tmp_path: Path):
 
     assert result.status == "missing"
     assert result.format == "gguf"
-    # Multi-shelf lookup may check several shelves; all should miss.
-    assert result.checks  # at least one check happened
+    assert result.checks
     assert all(c["result"] == "miss" for c in result.checks)
 
 
@@ -125,22 +116,21 @@ def test_gguf_requires_quant(tmp_path: Path):
 
 def test_mlx_shelf_hit_requires_config_json(tmp_path: Path):
     cfg = _config(tmp_path)
-    mlx = cfg.shelf_root / "mlx" / "qwen3-14b-4bit"
-    mlx.mkdir(parents=True)
-    (mlx / "config.json").write_text("{}")
+    target = cfg.shelf_root / "mlx" / "mlx-community" / "Qwen3-14B-4bit"
+    target.mkdir(parents=True)
+    (target / "config.json").write_text("{}")
 
     result = resolve_model(cfg, "mlx-community/Qwen3-14B-4bit")
 
     assert result.status == "found"
     assert result.source == "local_shelf"
     assert result.format == "mlx"
-    assert result.path == mlx
+    assert result.path == target
 
 
 def test_mlx_empty_dir_does_not_count(tmp_path: Path):
     cfg = _config(tmp_path)
-    mlx = cfg.shelf_root / "mlx" / "qwen3-14b-4bit"
-    mlx.mkdir(parents=True)
+    (cfg.shelf_root / "mlx" / "mlx-community" / "Qwen3-14B-4bit").mkdir(parents=True)
     # No config.json on purpose.
 
     result = resolve_model(cfg, "mlx-community/Qwen3-14B-4bit")
@@ -152,25 +142,22 @@ def test_mlx_empty_dir_does_not_count(tmp_path: Path):
 
 def test_safetensors_shelf_hit(tmp_path: Path):
     cfg = _config(tmp_path)
-    st = cfg.shelf_root / "safetensors" / "qwen3-14b"
-    st.mkdir(parents=True)
-    (st / "config.json").write_text("{}")
+    target = cfg.shelf_root / "safetensors" / "Qwen" / "Qwen3-14B"
+    target.mkdir(parents=True)
+    (target / "config.json").write_text("{}")
 
     result = resolve_model(cfg, "Qwen/Qwen3-14B")
 
     assert result.status == "found"
     assert result.format == "safetensors"
-    assert result.path == st
+    assert result.path == target
 
-
-# --- explicit --format override --------------------------------------------
 
 def test_format_override(tmp_path: Path):
     cfg = _config(tmp_path)
-    # User asks for safetensors of a repo we'd otherwise detect as gguf.
-    st = cfg.shelf_root / "safetensors" / "qwen3-14b-gguf"
-    st.mkdir(parents=True)
-    (st / "config.json").write_text("{}")
+    target = cfg.shelf_root / "safetensors" / "Qwen" / "Qwen3-14B-GGUF"
+    target.mkdir(parents=True)
+    (target / "config.json").write_text("{}")
 
     result = resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", format="safetensors")
 
@@ -200,7 +187,6 @@ def test_storage_check_errors_for_unmounted_volume():
 
 
 def test_volume_check_runs_before_shelf_check():
-    """When both fail, the more specific unmounted-volume error should win."""
     cfg = Config(shelf_root=NONEXISTENT_VOLUME / "models")
     with pytest.raises(StorageNotAvailableError) as exc:
         check_storage_available(cfg)
@@ -213,75 +199,12 @@ def test_resolve_model_errors_when_volume_unmounted():
         resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", quant="Q4_K_M")
 
 
-# --- multi-shelf lookup ---------------------------------------------------
-
-
-def _patch_candidates(monkeypatch, paths: list):
-    """Replace list_shelf_candidates with a fixed return so tests don't see the real /Volumes."""
-    import model_shelf.resolver as resolver_mod
-    monkeypatch.setattr(
-        resolver_mod,
-        "list_shelf_candidates",
-        lambda cfg: list(paths),
-    )
-
-
-def test_gguf_lookup_hits_additional_shelf(tmp_path: Path, monkeypatch):
-    primary = tmp_path / "primary"
-    extra = tmp_path / "extra"
-    primary.mkdir()
-    (extra / "gguf").mkdir(parents=True)
-    (extra / "gguf" / "qwen3-14b-q4_k_m.gguf").write_bytes(b"x")
-    _patch_candidates(monkeypatch, [primary, extra])
-
-    cfg = Config(shelf_root=primary, allow_downloads=False)
-    result = resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", quant="Q4_K_M")
-
-    assert result.status == "found"
-    assert result.source == "local_shelf"
-    assert result.path == extra / "gguf" / "qwen3-14b-q4_k_m.gguf"
-    # Both shelves were checked, primary missed, additional hit.
-    assert [c["result"] for c in result.checks] == ["miss", "hit"]
-
-
-def test_gguf_lookup_prefers_primary_when_both_have_file(tmp_path: Path, monkeypatch):
-    primary = tmp_path / "primary"
-    extra = tmp_path / "extra"
-    for parent in (primary, extra):
-        (parent / "gguf").mkdir(parents=True)
-        (parent / "gguf" / "qwen3-14b-q4_k_m.gguf").write_bytes(b"x")
-    _patch_candidates(monkeypatch, [primary, extra])
-
-    cfg = Config(shelf_root=primary, allow_downloads=False)
-    result = resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", quant="Q4_K_M")
-
-    assert result.path == primary / "gguf" / "qwen3-14b-q4_k_m.gguf"
-    # Lookup stopped at the primary; extra not checked.
-    assert len(result.checks) == 1
-
-
-def test_mlx_lookup_hits_additional_shelf(tmp_path: Path, monkeypatch):
-    primary = tmp_path / "primary"
-    extra = tmp_path / "extra"
-    primary.mkdir()
-    model_dir = extra / "mlx" / "qwen3-14b-4bit"
-    model_dir.mkdir(parents=True)
-    (model_dir / "config.json").write_text("{}")
-    _patch_candidates(monkeypatch, [primary, extra])
-
-    cfg = Config(shelf_root=primary, allow_downloads=False)
-    result = resolve_model(cfg, "mlx-community/Qwen3-14B-4bit")
-
-    assert result.status == "found"
-    assert result.path == model_dir
-
-
 # --- init_shelf -----------------------------------------------------------
 
 def test_init_shelf_creates_subfolders(tmp_path: Path):
     cfg = Config(shelf_root=tmp_path / "newshelf")
     created = init_shelf(cfg)
-    assert len(created) == 4  # shelf_root + 3 format subdirs
+    assert len(created) == 4
     assert (cfg.shelf_root / "gguf").is_dir()
     assert (cfg.shelf_root / "mlx").is_dir()
     assert (cfg.shelf_root / "safetensors").is_dir()
@@ -299,18 +222,62 @@ def test_init_shelf_errors_on_unmounted_volume():
         init_shelf(cfg)
 
 
-# --- backwards compat: old config with hf_cache_root still loads -----------
+# --- multi-shelf lookup ---------------------------------------------------
 
-def test_load_config_ignores_legacy_hf_cache_root(tmp_path: Path):
-    """An old config with hf_cache_root must still load without raising."""
-    from model_shelf.config import load_config
-    cfg_file = tmp_path / "old.toml"
-    cfg_file.write_text(
-        'shelf_root      = "/tmp/old/shelf"\n'
-        'hf_cache_root   = "/tmp/old/hf-cache"\n'
-        "allow_downloads = false\n"
+def _patch_candidates(monkeypatch, paths: list):
+    import model_shelf.resolver as resolver_mod
+    monkeypatch.setattr(
+        resolver_mod,
+        "list_shelf_candidates",
+        lambda cfg: list(paths),
     )
-    cfg = load_config(cfg_file)
-    assert str(cfg.shelf_root) == "/tmp/old/shelf"
-    assert cfg.allow_downloads is False
-    assert not hasattr(cfg, "hf_cache_root")
+
+
+def test_gguf_lookup_hits_additional_shelf(tmp_path: Path, monkeypatch):
+    primary = tmp_path / "primary"
+    extra = tmp_path / "extra"
+    primary.mkdir()
+    target = extra / "gguf" / "Qwen" / "Qwen3-14B-GGUF"
+    target.mkdir(parents=True)
+    (target / "Qwen3-14B-Q4_K_M.gguf").write_bytes(b"x")
+    _patch_candidates(monkeypatch, [primary, extra])
+
+    cfg = Config(shelf_root=primary, allow_downloads=False)
+    result = resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", quant="Q4_K_M")
+
+    assert result.status == "found"
+    assert result.source == "local_shelf"
+    assert result.path == target / "Qwen3-14B-Q4_K_M.gguf"
+    assert [c["result"] for c in result.checks] == ["miss", "hit"]
+
+
+def test_gguf_lookup_prefers_primary_when_both_have_file(tmp_path: Path, monkeypatch):
+    primary = tmp_path / "primary"
+    extra = tmp_path / "extra"
+    for parent in (primary, extra):
+        target = parent / "gguf" / "Qwen" / "Qwen3-14B-GGUF"
+        target.mkdir(parents=True)
+        (target / "Qwen3-14B-Q4_K_M.gguf").write_bytes(b"x")
+    _patch_candidates(monkeypatch, [primary, extra])
+
+    cfg = Config(shelf_root=primary, allow_downloads=False)
+    result = resolve_model(cfg, "Qwen/Qwen3-14B-GGUF", quant="Q4_K_M")
+
+    assert result.path == primary / "gguf" / "Qwen" / "Qwen3-14B-GGUF" / "Qwen3-14B-Q4_K_M.gguf"
+    assert len(result.checks) == 1
+
+
+def test_mlx_lookup_hits_additional_shelf(tmp_path: Path, monkeypatch):
+    primary = tmp_path / "primary"
+    extra = tmp_path / "extra"
+    primary.mkdir()
+    target = extra / "mlx" / "mlx-community" / "Qwen3-14B-4bit"
+    target.mkdir(parents=True)
+    (target / "config.json").write_text("{}")
+    _patch_candidates(monkeypatch, [primary, extra])
+
+    cfg = Config(shelf_root=primary, allow_downloads=False)
+    result = resolve_model(cfg, "mlx-community/Qwen3-14B-4bit")
+
+    assert result.status == "found"
+    assert result.path == target

@@ -10,7 +10,7 @@ A local-first resolver for Hugging Face models — GGUF, MLX, and safetensors. Y
   status      found
   source      local_shelf
   format      gguf
-  path        /Volumes/MyDrive/ModelShelf/models/gguf/qwen3-14b-q4_k_m.gguf
+  path        /Volumes/MyDrive/ModelShelf/models/gguf/Qwen/Qwen3-14B-GGUF/Qwen3-14B-Q4_K_M.gguf
 ```
 
 ## Why
@@ -18,7 +18,7 @@ A local-first resolver for Hugging Face models — GGUF, MLX, and safetensors. Y
 Local AI workflows download the same model files over and over — across tools, runtimes, and machines. Model Shelf gives you one curated library at a path you own, and one shell command that asks: *do I already have this locally?*
 
 - Handles **GGUF, MLX, and safetensors** through one CLI — format auto-detected from the repo id.
-- **One root, friendly filenames** — `qwen3-14b-q4_k_m.gguf`, `qwen3-14b-4bit/`, `qwen3-14b/`. No opaque `models--{org}--{repo}/snapshots/abc.../` to navigate.
+- **Publisher/repo layout** that mirrors Hugging Face Hub (and matches LM Studio's expected structure) — `gguf/Qwen/Qwen3-14B-GGUF/Qwen3-14B-Q4_K_M.gguf` instead of `models--Qwen--Qwen3-14B-GGUF/snapshots/abc.../...`.
 - Works with **any** storage you already mount: external SSD, Thunderbolt DAS, NAS, or just an internal folder.
 - Downloads land **directly** in the shelf at the friendly path — no parallel Hugging Face cache to manage or clean up.
 - A single shell command (`model-shelf resolve … --json`) means any agent that can run shell commands can plug it in — no special protocols, no extra server.
@@ -58,14 +58,23 @@ What happens depends on what Model Shelf can see:
 - **No external drives connected** → falls back to internal storage (`~/.cache/model-shelf/models`) and tells you.
 - **Need explicit control** → `model-shelf init /path/to/shelf` skips detection and uses that path.
 
-Whichever path is picked, Model Shelf writes it to `~/.config/model-shelf/config.toml` and creates:
+Whichever path is picked, Model Shelf creates the three format subfolders under it. Downloads then nest by publisher and repo (mirrors Hugging Face Hub, matches LM Studio's layout):
 
 ```
 models/
-├── gguf/         single .gguf files       (qwen3-14b-q4_k_m.gguf)
-├── mlx/          directories              (qwen3-14b-4bit/)
-└── safetensors/  directories              (qwen3-14b/)
+├── gguf/
+│   └── Qwen/
+│       └── Qwen3-14B-GGUF/
+│           └── Qwen3-14B-Q4_K_M.gguf
+├── mlx/
+│   └── mlx-community/
+│       └── Qwen3-14B-4bit/
+└── safetensors/
+    └── Qwen/
+        └── Qwen3-14B/
 ```
+
+By default `init` does **not** pin a path in the config — discovery handles drive swaps and renames automatically. Pass an explicit path (`model-shelf init /path/to/shelf`) only when you want to pin a specific location in the config.
 
 Switch shelves later by re-running `init`. Override which config file is used with `$MODEL_SHELF_CONFIG` or `--config <path>`. The user-level config (`~/.config/model-shelf/config.toml`) is the only implicit lookup — Model Shelf does not pick up a `./config.toml` from your current directory, so unrelated tools' configs can't accidentally hijack it.
 
@@ -175,14 +184,14 @@ For every resolve request:
 
 No parallel cache to manage. `huggingface_hub` writes a small hidden `.cache/huggingface/` subfolder inside the shelf for download metadata (resumability) — it's filtered out of `model-shelf list`.
 
-Curated-shelf naming conventions:
+Curated-shelf paths:
 
-| Repo | Quant | Curated shelf path |
+| Repo | Quant | Path under `shelf_root` |
 |---|---|---|
-| `Qwen/Qwen3-14B-GGUF` | `Q4_K_M` | `gguf/qwen3-14b-q4_k_m.gguf` |
-| `meta-llama/Llama-3.1-8B-Instruct` | `Q5_K_M` | `gguf/llama-3.1-8b-instruct-q5_k_m.gguf` |
-| `mlx-community/Qwen3-14B-4bit` | — | `mlx/qwen3-14b-4bit/` |
-| `Qwen/Qwen3-14B` | — | `safetensors/qwen3-14b/` |
+| `Qwen/Qwen3-14B-GGUF` | `Q4_K_M` | `gguf/Qwen/Qwen3-14B-GGUF/Qwen3-14B-Q4_K_M.gguf` |
+| `meta-llama/Llama-3.1-8B-Instruct-GGUF` | `Q5_K_M` | `gguf/meta-llama/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-Q5_K_M.gguf` |
+| `mlx-community/Qwen3-14B-4bit` | — | `mlx/mlx-community/Qwen3-14B-4bit/` |
+| `Qwen/Qwen3-14B` | — | `safetensors/Qwen/Qwen3-14B/` |
 
 A directory-format shelf hit requires the directory to exist **and** contain a `config.json` — that's the minimal "this is actually a model" sanity check.
 
@@ -203,7 +212,7 @@ shelf_root = "~/.cache/model-shelf/models"
 
 ## Status
 
-v0.12 — GGUF, MLX, and safetensors via CLI + Python lib. **Config is unpinned by default**: `shelf_root` is optional, auto-discovered at runtime from any mounted `/Volumes/*/ModelShelf/models` (else internal). `model-shelf init <path>` pins; `model-shelf init` without an argument does not. Multi-shelf lookup: every `resolve` checks the primary plus every mounted drive with a ModelShelf folder plus the internal default. `model-shelf find <query>` searches Hugging Face for loose natural-language queries. Mount precheck refuses to write if the configured volume isn't mounted. Roadmap: `verify` subcommand, quantized-safetensors variants (AWQ/GPTQ).
+v0.13 — GGUF, MLX, and safetensors via CLI + Python lib. **Publisher/repo nested layout** that mirrors the Hugging Face Hub (and matches what LM Studio expects). Config is unpinned by default: `shelf_root` is optional, auto-discovered at runtime from any mounted `/Volumes/*/ModelShelf/models` (else internal). `model-shelf init <path>` pins; `model-shelf init` without an argument does not. Multi-shelf lookup: every `resolve` checks the primary plus every mounted drive with a ModelShelf folder plus the internal default. `model-shelf find <query>` searches Hugging Face for loose natural-language queries. Mount precheck refuses to write if the configured volume isn't mounted. Roadmap: `verify` subcommand, quantized-safetensors variants (AWQ/GPTQ).
 
 ## License
 
