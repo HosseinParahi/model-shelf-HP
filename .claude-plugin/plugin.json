@@ -1,7 +1,7 @@
 {
   "name": "model-shelf",
   "description": "Local-first resolver for Hugging Face models (GGUF, MLX, safetensors). The agent checks your own storage and any mounted drives before downloading anything.",
-  "version": "0.12.1",
+  "version": "0.13.1",
   "author": {
     "name": "Alex Ziskind"
   },
