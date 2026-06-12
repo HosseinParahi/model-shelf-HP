@@ -1,0 +1,19 @@
+{
+  "name": "model-shelf",
+  "owner": {
+    "name": "Alex Ziskind"
+  },
+  "plugins": [
+    {
+      "name": "model-shelf",
+      "source": "./",
+      "description": "Local-first resolver for Hugging Face models (GGUF, MLX, safetensors). The agent checks your own storage and any mounted drives before downloading anything.",
+      "version": "0.13.1",
+      "author": {
+        "name": "Alex Ziskind"
+      },
+      "homepage": "https://github.com/alexziskind1/model-shelf",
+      "license": "MIT"
+    }
+  ]
+}
